@@ -13,7 +13,8 @@ con Bancs y el disparo de la IA del flujo transaccional principal
 app/
   domain/           entidades y excepciones de negocio puras (sin FastAPI ni SQLAlchemy)
   application/       casos de uso + puertos (interfaces) + DTOs internos
-  infrastructure/     adaptadores concretos: engine de Postgres, modelos ORM, repositorios
+  infrastructure/     adaptadores concretos: engine de Postgres, modelos ORM, repositorios, cliente HTTP de IA
+  workers/            AIRelayWorker: consumidor asíncrono del outbox para el evento `ai.recommend` (punto 3.3)
   api/                capa HTTP (FastAPI): routers, inyección de dependencias, middleware, errores
     v1/                 versión actual del contrato HTTP (schemas, router, DI)
 tests/                tests del caso de uso con fakes en memoria (no requieren Postgres)
@@ -69,6 +70,10 @@ servicio.
 | `MAX_OPTIMISTIC_RETRIES`    | `3`                                                              | Reintentos ante conflicto de versión           |
 | `LOG_LEVEL`                 | `INFO`                                                           | Nivel de logging                               |
 | `ENVIRONMENT`               | `development`                                                    | Etiqueta informativa del entorno               |
+| `AI_SERVICE_URL`            | `http://localhost:8001`                                          | URL del microservicio de IA (`services/ai-service`) |
+| `AI_REQUEST_TIMEOUT_SECONDS`| `2.0`                                                             | Timeout de la llamada HTTP al servicio de IA   |
+| `AI_WORKER_POLL_INTERVAL_SECONDS` | `2.0`                                                       | Frecuencia de polling del `AIRelayWorker`       |
+| `AI_WORKER_BATCH_SIZE`      | `20`                                                              | Eventos `ai.recommend` procesados por ciclo    |
 
 ## Endpoint principal
 

@@ -40,11 +40,22 @@ services:
       LOG_LEVEL: INFO
       MAX_OPTIMISTIC_RETRIES: 3
       ENVIRONMENT: development
+      # Servicio de IA (punto 3.3), consumido de forma asíncrona por el AIRelayWorker
+      AI_SERVICE_URL: http://ai-service:8001
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      ai-service:
+        condition: service_started
+
+  ai-service:
+    build:
+      context: ./services/ai-service
+    container_name: smartbancs-ai-service
+    ports:
+      - "8001:8001"
 
 volumes:
   postgres_data:

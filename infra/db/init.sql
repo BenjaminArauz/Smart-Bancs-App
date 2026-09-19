@@ -38,6 +38,20 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     processed_at    TIMESTAMPTZ NULL
 );
 
+-- Índice de soporte para el polling del worker de outbox (busca solo lo no procesado)
+CREATE INDEX IF NOT EXISTS idx_outbox_unprocessed ON outbox_events(created_at) WHERE processed_at IS NULL;
+
+-- Resultado del scoring de IA (punto 3.3), escrito por el worker AIRelayWorker
+-- al consumir eventos outbox de tipo 'ai.recommend'.
+CREATE TABLE IF NOT EXISTS risk_scores (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    transaction_id  UUID NOT NULL UNIQUE REFERENCES transactions(id),
+    risk_score      NUMERIC(5, 4) NOT NULL CHECK (risk_score >= 0 AND risk_score <= 1),
+    risk_level      VARCHAR(20) NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+    model_version   VARCHAR(50) NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- El worker relay (pendiente) consulta esto para saber qué le falta publicar
 CREATE INDEX IF NOT EXISTS idx_outbox_unprocessed ON outbox_events(created_at) WHERE processed_at IS NULL;
 

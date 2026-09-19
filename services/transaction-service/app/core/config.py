@@ -25,5 +25,12 @@ class Settings(BaseSettings):
     max_optimistic_retries: int = 3
     log_level: str = "INFO"
 
+    # Servicio de IA (punto 3.3): consumido de forma asíncrona por el
+    # worker de outbox, nunca en el camino síncrono de una transacción.
+    ai_service_url: str = "http://localhost:8001"
+    ai_request_timeout_seconds: float = 2.0
+    ai_worker_poll_interval_seconds: float = 2.0
+    ai_worker_batch_size: int = 20
+
 
 settings = Settings()

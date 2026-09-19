@@ -57,3 +57,16 @@ class OutboxEventORM(Base):
     trace_id: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RiskScoreORM(Base):
+    """Resultado del scoring de IA para una transacción (punto 3.3)."""
+
+    __tablename__ = "risk_scores"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
+    transaction_id: Mapped[uuid.UUID] = mapped_column(UUID, ForeignKey("transactions.id"), nullable=False, unique=True)
+    risk_score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
