@@ -1,0 +1,2 @@
+# testing (el script principal no tiene dependencias externas)
+pytest==8.3.3

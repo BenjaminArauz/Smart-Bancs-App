@@ -1,0 +1,50 @@
+# SmartBancs App — Orquestación local
+#
+# Un solo comando levanta todo el entorno de desarrollo:
+#   docker compose up --build
+#
+# Nota de diseño: cada servicio mantiene su propio Dockerfile y
+# requirements.txt dentro de services/<nombre>/ — este archivo solo
+# los ORQUESTA (los conecta en red, define variables de entorno y
+# orden de arranque). El código sigue viviendo separado, carpeta por
+# carpeta, como corresponde a una arquitectura de microservicios.
+
+name: smartbancs-app
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartbancs-postgres
+    environment:
+      POSTGRES_USER: smartbancs
+      POSTGRES_PASSWORD: smartbancs
+      POSTGRES_DB: smartbancs
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Se ejecuta automáticamente en el primer arranque (crea tablas + datos semilla)
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartbancs -d smartbancs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  transaction-service:
+    build:
+      context: ./services/transaction-service
+    container_name: smartbancs-transaction-service
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smartbancs:smartbancs@postgres:5432/smartbancs
+      LOG_LEVEL: INFO
+      MAX_OPTIMISTIC_RETRIES: 3
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -49,6 +49,10 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+
+# Artefactos generados por el ETL (se regeneran con transform.py)
+etl/output/
+.pytest_cache/
 cover/
 
 # Translations
