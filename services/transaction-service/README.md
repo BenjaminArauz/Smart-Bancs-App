@@ -107,7 +107,13 @@ Content-Type: application/json
 | 500    | Error inesperado (revisar logs con `trace_id`)     |
 
 Otros endpoints:
-- `GET /health` — liveness/readiness para el orquestador.
+- `GET /health` — liveness (el proceso está corriendo).
+- `GET /health/ready` — readiness (verifica conexión a Postgres con `SELECT 1`).
+- `GET /metrics` — métricas en formato Prometheus (`http_requests_total`,
+  `http_request_duration_seconds`, `domain_errors_total`,
+  `transactions_processed_total`, `ai_relay_events_total`,
+  `ai_relay_event_duration_seconds`, `outbox_pending_events`; ver
+  `app/core/metrics.py` y sección 3.4 de `docs/documento-tecnico.md`).
 - `GET /docs` — documentación interactiva (Swagger UI).
 
 ## Probar
