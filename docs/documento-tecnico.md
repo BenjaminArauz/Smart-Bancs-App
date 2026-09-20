@@ -2,7 +2,7 @@
 
 > Nota: este documento se completa de forma incremental a medida que se
 > resuelven los puntos del reto. Por ahora contiene las secciones 3.2,
-> 3.3 y 3.4; el resto (arquitectura general, 3.1, 3.5–3.6) queda
+> 3.3, 3.4 y 3.5; el resto (arquitectura general, 3.1 y 3.6) queda
 > pendiente.
 
 ## 3.2. Bancs: Manejo, Utilización e Integración de Datos
@@ -377,4 +377,97 @@ forma que enchufar un backend real después sea un cambio de
 configuración (scrape target), no de código. `/metrics` ya sigue el
 formato estándar de exposición de Prometheus, que es lo que la mayoría
 de esos backends consumen de forma nativa.
+
+## 3.5. Operaciones: incidente crítico simulado
+
+### 3.5.1. Monitoreo implementado (práctico)
+
+**Escenario:** durante un pico de quincena aumentan la latencia, los
+`timeout` de conexión a Postgres y los reportes de deadlock. La primera
+acción es consultar `GET /metrics` y buscar el mismo intervalo de tiempo
+en los logs del servicio. El `X-Trace-Id` de la respuesta permite seguir
+una transferencia concreta desde HTTP hasta la consulta SQL.
+
+El servicio registra cada consulta SQL ejecutada por SQLAlchemy, sin
+valores de parámetros sensibles:
+
+- `db_query_duration_seconds{operation,outcome}` muestra latencia de
+  `SELECT`, `INSERT`, `UPDATE` y `DELETE`, incluyendo consultas con error.
+- `db_errors_total{error_type}` separa `pool_timeout`, `deadlock`,
+  `lock_timeout`, `statement_timeout` y `database_error`.
+- El logger `database` escribe operación, duración, consulta parametrizada
+  truncada y detalle del error, identificando la consulta sin registrar
+  montos o credenciales.
+- `db_pool_checked_out_connections` muestra las conexiones ocupadas. Si
+  se acerca a `DB_POOL_SIZE + DB_MAX_OVERFLOW` mientras crece
+  `pool_timeout`, el cuello de botella está en el pool o en consultas
+  lentas que retienen conexiones.
+
+Alertas iniciales para Prometheus (los valores deben calibrarse con la
+línea base real):
+
+```promql
+histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+rate(db_errors_total{error_type="pool_timeout"}[5m]) > 0
+rate(db_errors_total{error_type="deadlock"}[5m]) > 0
+```
+
+### 3.5.2. Runbook de respuesta (teórico-práctico)
+
+**0. Confirmar y delimitar.** El on-call conserva `trace_id`, hora UTC y
+endpoint afectado; revisa p95/p99 HTTP, tasa de errores,
+`db_pool_checked_out_connections` y los contadores de errores de BD. Se
+verifica `/health/ready`: si falla, la instancia se saca del balanceo sin
+reiniciarla automáticamente.
+
+**1. Estabilización inmediata.**
+
+- Pausar consumidores no críticos, como el relay de IA, para reducir
+  presión sobre Postgres; el outbox conserva los eventos.
+- Reducir temporalmente el tráfico por instancia y repartirlo entre
+  réplicas saludables. No aumentar `DB_POOL_SIZE` a ciegas: el total debe
+  caber en `max_connections` de Postgres.
+- Si una instancia está atrapada o mantiene conexiones agotadas, ponerla
+  en *draining* y reiniciarla de forma controlada para liberar conexiones.
+- Para un bloqueo confirmado, cancelar primero la consulta y después la
+  sesión bloqueadora, con aprobación del responsable de BD:
+
+```sql
+SELECT pid, usename, state, wait_event_type, wait_event,
+       now() - query_start AS age, left(query, 300) AS query
+FROM pg_stat_activity
+WHERE datname = current_database()
+ORDER BY query_start NULLS LAST;
+
+SELECT blocked.pid AS blocked_pid, blocking.pid AS blocking_pid,
+       left(blocked.query, 200) AS blocked_query,
+       left(blocking.query, 200) AS blocking_query
+FROM pg_stat_activity blocked
+JOIN pg_stat_activity blocking
+  ON blocking.pid = ANY(pg_blocking_pids(blocked.pid));
+
+SELECT pg_cancel_backend(<pid>);     -- primero, cancelación cooperativa
+SELECT pg_terminate_backend(<pid>);  -- solo si continúa bloqueada
+```
+
+**2. Diagnóstico de causa.** `deadlock` (`SQLSTATE 40P01`) indica un
+ciclo de locks; `lock_timeout` (`55P03`) indica espera por un lock;
+`pool_timeout` indica que la aplicación no obtuvo conexión a tiempo; y
+`statement_timeout` (`57014`) indica que Postgres canceló una consulta
+demasiado larga. Se comparan los SQL del logger `database` con
+`pg_stat_activity`, duración de transacciones y conexiones ocupadas antes
+de cambiar parámetros.
+
+**3. Recuperación y prevención.** Luego de estabilizar, se reactivan
+consumidores gradualmente, se confirma que la cola outbox disminuye y se
+comprueba que p95, errores y pool regresan a la línea base. Se conserva
+el incidente con sus `trace_id` y consultas, se corrige el orden de locks
+o el índice responsable y se prueba el escenario de concurrencia antes
+de retirar el modo degradado.
+
+Los cambios temporales de `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` y
+`DB_POOL_TIMEOUT_SECONDS` se hacen mediante variables de entorno y un
+despliegue controlado, nunca editando la imagen. La solución permanente
+es corregir la consulta o la contención; aumentar timeouts solamente
+oculta la saturación y puede empeorar la cola de peticiones.
 

@@ -61,6 +61,19 @@ db_pool_checked_out = Gauge(
     "Conexiones del pool de BD en uso en este momento",
 )
 
+db_query_duration_seconds = Histogram(
+    "db_query_duration_seconds",
+    "Duración en segundos de consultas SQL, por operación y resultado",
+    ["operation", "outcome"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
+)
+
+db_errors_total = Counter(
+    "db_errors_total",
+    "Errores de base de datos clasificados por causa",
+    ["error_type"],
+)
+
 # --- Negocio: transacciones procesadas (creada vs. reintento idempotente) ---
 transactions_processed_total = Counter(
     "transactions_processed_total",

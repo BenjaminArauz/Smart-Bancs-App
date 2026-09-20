@@ -12,6 +12,8 @@ from fastapi.responses import JSONResponse
 
 from app.core.logging import trace_id_var, get_logger
 from app.core.metrics import domain_errors_total
+from app.infrastructure.database import _error_type
+from app.core.metrics import db_errors_total
 from app.domain.exceptions import AccountNotFoundError, InsufficientFundsError, ConcurrencyConflictError
 
 logger = get_logger(__name__)
@@ -38,6 +40,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         domain_errors_total.labels("UnhandledException").inc()
+        error_type = _error_type(exc)
+        if error_type == "pool_timeout":
+            db_errors_total.labels(error_type).inc()
         logger.exception("error no controlado")
         return JSONResponse(
             status_code=500,
