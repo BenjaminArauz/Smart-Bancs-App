@@ -11,10 +11,14 @@ servicio de transacciones (distintos ciclos de release, distinto
 scaling policy, incluso distinto lenguaje si hiciera falta a futuro).
 """
 
-from fastapi import FastAPI, HTTPException
+import time
+
+from fastapi import FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.model import RiskModel
 from app.schemas import TransactionFeatures, RiskScoreResponse
+from app.metrics import model_loaded, score_duration_seconds, score_requests_total
 
 app = FastAPI(title="SmartBancs AI Service")
 
@@ -23,17 +27,26 @@ try:
 except FileNotFoundError:
     risk_model = None
 
+model_loaded.set(1 if risk_model is not None else 0)
+
 
 @app.get("/health", tags=["ops"])
 async def health():
     return {"status": "ok", "model_loaded": risk_model is not None}
 
 
+@app.get("/metrics", tags=["ops"])
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.post("/score", response_model=RiskScoreResponse, tags=["scoring"])
 async def score_transaction(body: TransactionFeatures):
     if risk_model is None:
+        score_requests_total.labels("model_unavailable").inc()
         raise HTTPException(status_code=503, detail="Modelo no disponible: ejecutar train_model.py")
 
+    start = time.perf_counter()
     risk_score, risk_level = risk_model.score(
         {
             "amount": body.amount,
@@ -42,6 +55,8 @@ async def score_transaction(body: TransactionFeatures):
             "is_weekend": int(body.is_weekend),
         }
     )
+    score_duration_seconds.observe(time.perf_counter() - start)
+    score_requests_total.labels("scored").inc()
     return RiskScoreResponse(
         transaction_id=body.transaction_id,
         risk_score=risk_score,

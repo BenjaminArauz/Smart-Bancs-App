@@ -1,8 +1,9 @@
 # SmartBancs App — Documento Técnico
 
 > Nota: este documento se completa de forma incremental a medida que se
-> resuelven los puntos del reto. Por ahora contiene las secciones 3.2 y
-> 3.3; el resto (arquitectura general, 3.1, 3.4–3.6) queda pendiente.
+> resuelven los puntos del reto. Por ahora contiene las secciones 3.2,
+> 3.3 y 3.4; el resto (arquitectura general, 3.1, 3.5–3.6) queda
+> pendiente.
 
 ## 3.2. Bancs: Manejo, Utilización e Integración de Datos
 
@@ -250,4 +251,130 @@ AIRelayWorker (asyncio.Task en background, mismo proceso)
   (CPU, memoria, latencia p95/p99 de `/score`, tasa de errores) por
   servicio, para dimensionar réplicas de `ai-service` de forma
   independiente al dimensionamiento de `transaction-service`.
+
+## 3.4. Instrumentación y Telemetría
+
+### 3.4.1. Mecanismos de observabilidad implementados (práctico)
+
+Se instrumentaron los tres pilares clásicos de observabilidad —logs,
+métricas y trazas de correlación— en **ambos** servicios
+(`transaction-service` y `ai-service`), reusando la infraestructura de
+logging ya existente (sección previa) en vez de agregar un stack nuevo:
+
+**1. Logs estructurados con correlación (ya existían, sección 3.3, se
+mantienen como pilar base):**
+[`core/logging.py`](../services/transaction-service/app/core/logging.py)
+emite cada línea como JSON (`ts`, `level`, `logger`, `trace_id`, `msg`) —
+parseable directamente por cualquier stack de logs (Cloud Logging, ELK,
+Loki) sin parsers frágiles basados en regex. El `trace_id` viaja en un
+`ContextVar` ([`TraceIdMiddleware`](../services/transaction-service/app/api/middleware.py))
+desde el header `X-Trace-Id` (o se genera si no viene) y aparece en
+**todos** los logs de esa petición, en cualquier capa — clave para
+reconstruir el recorrido completo de una transacción específica ante un
+reclamo puntual ("¿qué pasó con la transacción X?").
+
+**2. Métricas en formato Prometheus, expuestas en `GET /metrics`:**
+se agregó [`prometheus-client`](../services/transaction-service/requirements.txt)
+a ambos servicios y un módulo `core/metrics.py` (`app/metrics.py` en
+`ai-service`) con las métricas definidas en 3.4.2. `/metrics` es un
+endpoint HTTP estándar que cualquier scraper (Prometheus, Grafana
+Agent, Datadog Agent) puede consumir sin configuración adicional —no se
+inventó un formato propio.
+
+- **Middleware HTTP** ([`middleware.py`](../services/transaction-service/app/api/middleware.py)):
+  registra `http_requests_total` (por método, ruta y código de estado)
+  y `http_request_duration_seconds` (histograma) para **toda** petición,
+  exitosa o no, sin tener que instrumentar cada endpoint a mano. Se usa
+  `route.path` (la plantilla, p. ej. `/api/transactions`) y no
+  `request.url.path` crudo, para no explotar la cardinalidad de la
+  métrica con un label distinto por cada UUID de recurso.
+- **Errores de dominio** ([`exception_handlers.py`](../services/transaction-service/app/api/exception_handlers.py)):
+  `domain_errors_total`, con el tipo de excepción como label
+  (`InsufficientFundsError`, `ConcurrencyConflictError`,
+  `AccountNotFoundError`, `UnhandledException`). Complementa al código
+  HTTP: un 422 puede ser "saldo insuficiente" (comportamiento normal del
+  negocio) o un bug — separarlos evita que una tasa alta de 4xx
+  legítimos dispare una alerta de incidente real.
+- **Métrica de negocio** ([`router.py`](../services/transaction-service/app/api/router.py)):
+  `transactions_processed_total{outcome="created"|"replayed"}`. Una tasa
+  alta de `replayed` es indicio de clientes reintentando de más
+  (timeouts del lado del caller), no un problema del propio servicio.
+- **Worker de IA** ([`ai_relay.py`](../services/transaction-service/app/workers/ai_relay.py)):
+  `ai_relay_events_total{outcome="scored"|"retry"|"discarded"}`,
+  `ai_relay_event_duration_seconds` (latencia de la llamada a
+  `ai-service`) y `outbox_pending_events{event_type="ai.recommend"}` —un
+  *gauge* con la profundidad de la cola pendiente en cada batch, la
+  señal más temprana de que `ai-service` no está dando abasto, antes de
+  que se traduzca en timeouts visibles.
+- **`ai-service`** ([`app/main.py`](../services/ai-service/app/main.py)):
+  `score_requests_total{outcome="scored"|"model_unavailable"}`,
+  `score_duration_seconds` (latencia de inferencia) y el *gauge*
+  `model_loaded` (0/1) — permite alertar inmediatamente si el contenedor
+  levantó sin el artefacto del modelo (`risk_model.joblib`), en vez de
+  descubrirlo recién cuando empiezan a fallar transacciones.
+
+**3. Health checks diferenciados (liveness vs. readiness):**
+`transaction-service` expone `GET /health` (liveness: el proceso
+responde) y `GET /health/ready` (readiness: además, puede hablar con
+Postgres — hace un `SELECT 1` real y devuelve 503 si falla). Esta
+separación importa para el orquestador: un fallo de liveness reinicia
+el contenedor; un fallo de readiness solo lo saca temporalmente del
+balanceo, dándole tiempo a recuperarse (p. ej. mientras Postgres
+reinicia) sin perder el estado del proceso ni provocar un *restart
+loop*. `ai-service` mantiene su `/health` existente, que ya reporta
+`model_loaded`.
+
+### 3.4.2. Diseño de observabilidad (teórico)
+
+**Criterio general:** se adoptaron las **cuatro señales de oro**
+(*golden signals*: latencia, tráfico, errores, saturación) como marco
+para decidir qué instrumentar, en vez de registrar "todo lo que se
+pueda medir". Cada métrica elegida responde a una pregunta concreta de
+diagnóstico:
+
+| Señal | Métrica | Pregunta que responde ante un incidente |
+|---|---|---|
+| Latencia | `http_request_duration_seconds`, `score_duration_seconds`, `ai_relay_event_duration_seconds` | ¿La app está **lenta** o está **caída**? Un p95/p99 en aumento sostenido es degradación progresiva (detectable *antes* de la caída total), no un evento binario como un 5xx. |
+| Tráfico | `http_requests_total` (por ruta) | ¿El problema correlaciona con un **pico de carga** (capacidad) o aparece con tráfico normal (bug/regresión)? Distingue "hay que escalar" de "hay que revertir un deploy". |
+| Errores | `domain_errors_total`, `score_requests_total{outcome="model_unavailable"}` | ¿**Qué tipo** de falla predomina? Un salto en `ConcurrencyConflictError` apunta a contención de BD; uno en `model_unavailable` apunta a un problema de despliegue de `ai-service`, no de lógica de negocio. Sin este desglose, un 4xx/5xx agregado no dice *dónde* mirar. |
+| Saturación | `outbox_pending_events`, `db_pool_checked_out_connections`, `model_loaded` | ¿Algún recurso finito (cola, pool de conexiones, modelo cargado) está por agotarse **antes** de que eso se traduzca en errores visibles para el usuario? Es la señal más útil para actuar de forma *proactiva* en vez de reactiva. |
+
+**Por qué se justifica cada dato adicional, más allá de las cuatro
+señales:**
+
+- **`trace_id` en todos los logs:** sin un identificador de correlación,
+  diagnosticar un incidente puntual ("el cliente X dice que su
+  transacción falló") obliga a buscar por timestamp aproximado en logs
+  de múltiples servicios y procesos concurrentes — lento y propenso a
+  error. Con `trace_id` propagado end-to-end (API → outbox → worker →
+  `ai-service`), reconstruir el camino completo de una transacción es
+  una sola búsqueda exacta.
+- **`transactions_processed_total{outcome="replayed"}` y
+  `ai_relay_events_total{outcome="retry"}`:** una tasa alta de reintentos
+  no siempre es un fallo del propio servicio — puede ser un cliente mal
+  configurado (timeout muy corto) o una dependencia lenta. Medir el
+  *outcome*, no solo el volumen total, evita atribuir la causa raíz al
+  componente equivocado.
+- **`outbox_pending_events` como gauge (no solo un contador de
+  procesados):** un contador que crece siempre "se ve bien" aunque el
+  consumidor esté cayendo en desempeño; la profundidad de cola pendiente
+  es la métrica que realmente indica si el sistema está drenando trabajo
+  más rápido de lo que entra o si se está acumulando deuda hacia una
+  saturación futura — el mismo principio se aplicaría al `Worker Bancs`
+  de la sección 3.2.1 cuando se implemente.
+- **`model_loaded` como gauge binario:** el caso de falla más
+  disruptivo para `ai-service` no es "el modelo predice mal", es "el
+  contenedor levantó sin el artefacto" (`risk_model.joblib` faltante).
+  Es barato de medir y evita que ese modo de falla pase inadvertido
+  hasta que ya afectó transacciones reales.
+
+**Qué se dejó fuera deliberadamente (y por qué):** trazas distribuidas
+completas (OpenTelemetry con *spans* por llamada saliente) y un backend
+de series de tiempo desplegado (Prometheus + Grafana) quedan fuera del
+alcance práctico de este reto — el objetivo acá es demostrar el
+**patrón correcto de instrumentación** (qué medir y cómo exponerlo) de
+forma que enchufar un backend real después sea un cambio de
+configuración (scrape target), no de código. `/metrics` ya sigue el
+formato estándar de exposición de Prometheus, que es lo que la mayoría
+de esos backends consumen de forma nativa.
 

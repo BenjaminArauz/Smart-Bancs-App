@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.core.logging import trace_id_var, get_logger
+from app.core.metrics import domain_errors_total
 from app.domain.exceptions import AccountNotFoundError, InsufficientFundsError, ConcurrencyConflictError
 
 logger = get_logger(__name__)
@@ -26,6 +27,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     for exc_type, status_code in _STATUS_BY_EXCEPTION.items():
 
         async def handler(request: Request, exc, _status=status_code):
+            domain_errors_total.labels(type(exc).__name__).inc()
             return JSONResponse(
                 status_code=_status,
                 content={"error": type(exc).__name__, "message": str(exc), "trace_id": trace_id_var.get()},
@@ -35,6 +37,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
+        domain_errors_total.labels("UnhandledException").inc()
         logger.exception("error no controlado")
         return JSONResponse(
             status_code=500,

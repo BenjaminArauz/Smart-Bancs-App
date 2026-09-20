@@ -10,6 +10,7 @@ es lo único que cambiaría.
 from fastapi import APIRouter, Depends
 
 from app.core.logging import trace_id_var
+from app.core.metrics import transactions_processed_total
 from app.application.dto import ProcessTransactionCommand
 from app.application.use_cases import ProcessTransactionUseCase
 from app.api.schemas import TransactionRequest, TransactionResponse
@@ -30,6 +31,10 @@ async def create_transaction(
         trace_id=trace_id_var.get(),
     )
     result = await use_case.execute(command)
+    # Métrica de negocio (3.4): distinguimos "replayed" de "created" porque
+    # una tasa alta de replays es señal de un cliente reintentando de más
+    # (p. ej. timeouts del lado del caller), no un problema del servicio.
+    transactions_processed_total.labels("replayed" if result.was_replayed else "created").inc()
     return TransactionResponse(
         transaction_id=result.transaction_id,
         status=result.status,

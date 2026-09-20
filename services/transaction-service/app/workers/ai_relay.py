@@ -33,13 +33,15 @@ de un solo consumidor downstream.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.core.metrics import ai_relay_event_duration_seconds, ai_relay_events_total, outbox_pending_events
 from app.infrastructure.ai_client import AIRiskClient
 from app.infrastructure.database import AsyncSessionLocal
 from app.infrastructure.orm_models import OutboxEventORM, TransactionORM, RiskScoreORM
@@ -93,7 +95,17 @@ class AIRelayWorker:
             )
             events = list(result.scalars())
             if not events:
+                outbox_pending_events.labels(AI_EVENT_TYPE).set(0)
                 return 0
+
+            # Profundidad de la cola tal como la vio este batch: una señal
+            # de saturación temprana si `ai-service` no da abasto (ver 3.4.2).
+            pending_count = await session.scalar(
+                select(func.count())
+                .select_from(OutboxEventORM)
+                .where(OutboxEventORM.event_type == AI_EVENT_TYPE, OutboxEventORM.processed_at.is_(None))
+            )
+            outbox_pending_events.labels(AI_EVENT_TYPE).set(pending_count or 0)
 
             for event in events:
                 await self._process_event(session, event)
@@ -107,12 +119,16 @@ class AIRelayWorker:
         if transaction is None:
             logger.warning(f"transacción {transaction_id} no encontrada, se descarta el evento ai.recommend")
             event.processed_at = datetime.now(timezone.utc)
+            ai_relay_events_total.labels("discarded").inc()
             return
 
         features = self._build_features(transaction)
+        start = time.perf_counter()
         score = await self._ai_client.score_transaction(features)
+        ai_relay_event_duration_seconds.observe(time.perf_counter() - start)
         if score is None:
             # No marcamos processed_at: el evento se reintenta en el próximo ciclo.
+            ai_relay_events_total.labels("retry").inc()
             return
 
         session.add(
@@ -125,6 +141,7 @@ class AIRelayWorker:
             )
         )
         event.processed_at = datetime.now(timezone.utc)
+        ai_relay_events_total.labels("scored").inc()
         logger.info(f"transacción {transaction.id} scoreada: {score['risk_level']} ({score['risk_score']:.2f})")
 
     @staticmethod
