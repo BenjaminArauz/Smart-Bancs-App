@@ -64,10 +64,12 @@ en el primer arranque del contenedor de Postgres.
 ## Observabilidad
 
 Ambos microservicios exponen métricas en formato Prometheus vía `GET
-/metrics` (golden signals: tráfico, errores, latencia, saturación) y salud
-vía `GET /health` (`transaction-service` además expone `GET /health/ready`
-que valida la conexión a Postgres). Detalle de métricas, justificación de
-diseño y runbook de incidentes en las secciones 3.4 y 3.5 de
+/metrics` (golden signals: tráfico, errores, latencia, saturación, más
+métricas de capacidad/autoescalado para Cloud Run: concurrencia en curso e
+identidad de instancia) y salud vía `GET /health` (`transaction-service`
+además expone `GET /health/ready` que valida la conexión a Postgres).
+Detalle de métricas, justificación de diseño, escenarios de capacidad y
+runbook de incidentes en las secciones 3.4 a 3.6 de
 [`docs/documento-tecnico.md`](docs/documento-tecnico.md).
 
 ## Tests
@@ -87,5 +89,9 @@ Ver el árbol completo de carpetas y archivos en la vista del workspace, o
 navegar directamente por servicio: [`etl/`](etl/README.md),
 [`services/transaction-service/`](services/transaction-service/README.md),
 [`services/ai-service/`](services/ai-service/README.md).
+
+## Uso de Inteligencia Artificial
+
+Este proyecto fue desarrollado con apoyo de herramientas de IA (GitHub Copilot) en distintas partes del trabajo, y a continuación se detalla en qué puntos se usó: la **Presentación** (redacción y estructuración del contenido expuesto sobre el reto) fue generada con ayuda de IA; los **Scripts** (`run.sh`, `smoke-test.sh`, `stop.sh` en `scripts/`) fueron generados y ajustados con ayuda de IA; el **AI-Service** (`services/ai-service/`, incluyendo el entrenamiento del modelo `IsolationForest` y la API de scoring) fue implementado con ayuda de IA; y el **ETL** (`etl/transform.py` y su lógica de limpieza y generación de features) fue implementado con ayuda de IA.
 
 ---

@@ -32,4 +32,16 @@ model_loaded = Gauge(
     "1 si el modelo de riesgo está cargado en memoria, 0 si no",
 )
 
+# --- Capacidad y autoescalado (Cloud Run, ver 3.4.3 en documento-tecnico.md) ---
+score_requests_in_flight = Gauge(
+    "score_requests_in_flight",
+    "Peticiones a /score en curso en este instante en esta instancia",
+)
+
+app_instance_info = Gauge(
+    "app_instance_info",
+    "Metadata de la instancia en ejecución (valor fijo 1 mientras vive el proceso)",
+    ["instance_id", "revision"],
+)
+
 

@@ -109,11 +109,14 @@ Content-Type: application/json
 Otros endpoints:
 - `GET /health` — liveness (el proceso está corriendo).
 - `GET /health/ready` — readiness (verifica conexión a Postgres con `SELECT 1`).
-- `GET /metrics` — métricas en formato Prometheus (`http_requests_total`,
-  `http_request_duration_seconds`, `domain_errors_total`,
-  `transactions_processed_total`, `ai_relay_events_total`,
-  `ai_relay_event_duration_seconds`, `outbox_pending_events`; ver
-  `app/core/metrics.py` y sección 3.4 de `docs/documento-tecnico.md`).
+- `GET /metrics` — métricas en formato Prometheus, ver `app/core/metrics.py`
+  y sección 3.4 de `docs/documento-tecnico.md`:
+  - Tráfico/latencia HTTP: `http_requests_total`, `http_request_duration_seconds`
+  - Errores de negocio: `domain_errors_total`
+  - Base de datos: `db_query_duration_seconds`, `db_errors_total`, `db_pool_checked_out_connections`
+  - Negocio: `transactions_processed_total`
+  - Worker de IA: `ai_relay_events_total`, `ai_relay_event_duration_seconds`, `outbox_pending_events`
+  - Capacidad/autoescalado (Cloud Run, sección 3.4.3): `http_requests_in_flight`, `app_instance_info`
 - `GET /docs` — documentación interactiva (Swagger UI).
 
 ## Probar

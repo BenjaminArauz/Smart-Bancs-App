@@ -20,7 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from app.core.logging import trace_id_var, get_logger
-from app.core.metrics import http_requests_total, http_request_duration_seconds
+from app.core.metrics import http_requests_in_flight, http_requests_total, http_request_duration_seconds
 
 logger = get_logger("http")
 
@@ -35,9 +35,13 @@ class TraceIdMiddleware(BaseHTTPMiddleware):
         # de la métrica en Prometheus (un label por cada id distinto).
         path_template = request.url.path
 
+        # Concurrencia real de esta instancia: la señal que Cloud Run usa
+        # para decidir cuándo crear una instancia nueva (ver 3.4.3).
+        http_requests_in_flight.inc()
         try:
             response = await call_next(request)
         finally:
+            http_requests_in_flight.dec()
             trace_id_var.reset(token)
             route = request.scope.get("route")
             if route is not None:

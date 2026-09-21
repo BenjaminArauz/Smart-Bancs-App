@@ -28,6 +28,10 @@ uvicorn app.main:app --reload --port 8001
 ## Endpoints
 
 - `GET /health` → `{"status": "ok", "model_loaded": true}`
+- `GET /metrics` — métricas en formato Prometheus (`app/metrics.py`, sección
+  3.4 de `docs/documento-tecnico.md`): `score_requests_total`,
+  `score_duration_seconds`, `model_loaded`, y de capacidad/autoescalado
+  (sección 3.4.3) `score_requests_in_flight`, `app_instance_info`.
 - `POST /score`
 
 ```json

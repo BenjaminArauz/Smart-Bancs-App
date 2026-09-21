@@ -8,6 +8,8 @@ configuración por test si hace falta.
 """
 
 from contextlib import asynccontextmanager
+import os
+import uuid
 
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -15,7 +17,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
-from app.core.metrics import db_pool_checked_out
+from app.core.metrics import app_instance_info, db_pool_checked_out
 from app.api.middleware import TraceIdMiddleware
 from app.api.exception_handlers import register_exception_handlers
 from app.api.router import router as transactions_router
@@ -25,8 +27,13 @@ from app.workers.ai_relay import AIRelayWorker
 logger = get_logger("health")
 
 
+_INSTANCE_ID = str(uuid.uuid4())[:8]
+_REVISION = os.environ.get("K_REVISION", "local")
+
+
 def create_app() -> FastAPI:
     configure_logging(settings.log_level)
+    app_instance_info.labels(_INSTANCE_ID, _REVISION).set(1)
 
     ai_relay_worker = AIRelayWorker()
 

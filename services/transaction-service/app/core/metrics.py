@@ -102,4 +102,26 @@ outbox_pending_events = Gauge(
     ["event_type"],
 )
 
+# --- Capacidad y autoescalado (Cloud Run, ver 3.4.3) ---
+
+# Cloud Run crea una instancia nueva cuando las peticiones concurrentes de
+# una instancia existente llegan al límite configurado (`--concurrency`,
+# default 80). Este gauge es el equivalente local de esa señal: permite
+# correlacionar "cuántas peticiones a la vez" con "cuántas instancias hay"
+# una vez desplegado (Cloud Monitoring ya expone el conteo de instancias).
+http_requests_in_flight = Gauge(
+    "http_requests_in_flight",
+    "Peticiones HTTP en curso en este instante en esta instancia",
+)
+
+# Gauge fijo en 1, con instance_id/revision como labels: cada instancia
+# nueva (cold start de Cloud Run) aparece como una serie de tiempo nueva
+# en vez de sumarse a la anterior, así se puede contar "cuántas instancias
+# distintas existieron" en una ventana, no solo cuántas hay ahora.
+app_instance_info = Gauge(
+    "app_instance_info",
+    "Metadata de la instancia en ejecución (valor fijo 1 mientras vive el proceso)",
+    ["instance_id", "revision"],
+)
+
 
